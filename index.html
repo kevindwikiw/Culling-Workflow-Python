@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>Photo Culling Tool</title>
+    <style>
+        body { background: #111; color: #eee; margin: 0; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        
+        #group-banner { background: #d4af37; color: #000; text-align: center; padding: 6px; font-weight: bold; font-size: 14px; display: none; }
+        
+        #viewer { flex-grow: 1; display: flex; align-items: center; justify-content: center; position: relative; gap: 15px; padding: 20px; box-sizing: border-box; }
+        
+        .compare-box { flex: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; border: 3px solid transparent; border-radius: 6px; transition: 0.2s; background: rgba(0,0,0,0.3); }
+        .compare-box.active-focus { border-color: #4CAF50; background: rgba(76, 175, 80, 0.1); }
+        
+        .compare-box img { max-width: 100%; max-height: calc(100vh - 220px); object-fit: contain; }
+        
+        .box-footer { margin-top: 8px; font-size: 12px; color: #aaa; text-align: center; }
+        .box-badge { position: absolute; top: 10px; right: 10px; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 11px; display: none; }
+        .box-badge.bride { background: #e91e63; display: block; color: white; }
+        .box-badge.groom { background: #2196f3; display: block; color: white; }
+
+        .hud-left { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px; font-size: 13px; z-index: 10; }
+        .hud-right { position: absolute; top: 15px; right: 15px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; z-index: 10; }
+        
+        #filmstrip { height: 110px; background: #080808; display: flex; gap: 8px; padding: 8px; overflow-x: auto; align-items: center; justify-content: center; }
+        .thumb { height: 100%; cursor: pointer; border: 2px solid transparent; opacity: 0.4; transition: 0.2s; }
+        .thumb.current { border-color: #4CAF50; opacity: 1; }
+        .thumb img { height: 100%; object-fit: cover; }
+    </style>
+</head>
+<body>
+
+    <div id="group-banner">Duplicate group</div>
+
+    <div class="hud-left" id="hud-left">Memuat data...</div>
+    <div class="hud-right" id="hud-right">S: 0 | D: 0 | Both: 0 | None: 0</div>
+    
+    <div id="viewer"></div>
+    <div id="filmstrip"></div>
+
+    <script>
+        let photos = [];
+        let duplicates = {};
+        let groupIndices = {};
+        let stats = {};
+        let state = { current_index: 0, tags: {} };
+
+        async function loadData() {
+            const res = await fetch('/api/data');
+            const data = await res.json();
+            photos = data.photos;
+            duplicates = data.duplicates;
+            groupIndices = data.group_indices;
+            state = data.state;
+            stats = data.stats;
+            render();
+        }
+
+        function render() {
+            if (!photos.length) return;
+            const filename = photos[state.current_index];
+            
+            document.getElementById('hud-left').innerText = `Photo ${state.current_index + 1} / ${photos.length} | Tagged: ${stats.tagged}/${stats.total}`;
+            document.getElementById('hud-right').innerText = `S: ${stats.bride} | D: ${stats.groom} | Both: ${stats.both} | None: ${stats.none}`;
+            
+            const banner = document.getElementById('group-banner');
+            const groupNum = groupIndices[filename];
+            const group = duplicates[filename];
+
+            if (group && group.length > 1) {
+                banner.style.display = 'block';
+                banner.innerText = `📁 Duplicate group ${groupNum} (${group.length} foto berdampingan)`;
+            } else {
+                banner.style.display = 'none';
+            }
+
+            renderViewer(filename, group);
+            renderStrip(filename, group);
+        }
+
+        function renderViewer(filename, group) {
+            const viewer = document.getElementById('viewer');
+            viewer.innerHTML = '';
+
+            // Jika ada duplikat, tampilkan seluruh anggota grup secara berdampingan
+            const itemsToRender = (group && group.length > 1) ? group : [filename];
+
+            itemsToRender.forEach((file) => {
+                const box = document.createElement('div');
+                // Kotak aktif adalah foto yang sedang ditunjuk oleh state.current_index
+                const isActiveFocus = (file === filename);
+                box.className = 'compare-box ' + (isActiveFocus ? 'active-focus' : '');
+                
+                box.onclick = () => {
+                    state.current_index = photos.indexOf(file);
+                    render();
+                };
+
+                const img = document.createElement('img');
+                img.src = '/img/' + file;
+                box.appendChild(img);
+
+                const tags = state.tags[file] || { bride: false, groom: false };
+                if (tags.bride || tags.groom) {
+                    const badge = document.createElement('div');
+                    badge.className = 'box-badge bride';
+                    badge.innerText = tags.bride && tags.groom ? 'Bride & Groom ✓' : (tags.bride ? 'Bride ✓' : 'Groom ✓');
+                    if (tags.groom && !tags.bride) badge.style.background = '#2196f3';
+                    box.appendChild(badge);
+                }
+
+                const footer = document.createElement('div');
+                footer.className = 'box-footer';
+                footer.innerText = `${file} ${isActiveFocus ? '⭐ (Aktif)' : ''}`;
+                box.appendChild(footer);
+
+                viewer.appendChild(box);
+            });
+        }
+
+        function renderStrip(filename, group) {
+            const strip = document.getElementById('filmstrip');
+            strip.innerHTML = ''; 
+            
+            if (!group || group.length < 2) return;
+
+            group.forEach(file => {
+                const thumb = document.createElement('div');
+                thumb.className = 'thumb ' + (file === filename ? 'current' : '');
+                thumb.onclick = () => {
+                    state.current_index = photos.indexOf(file);
+                    render();
+                };
+
+                const img = document.createElement('img');
+                img.src = '/img/' + file;
+                thumb.appendChild(img);
+                strip.appendChild(thumb);
+            });
+        }
+
+        async function toggleTag(reviewer) {
+            // Tag selalu diberikan ke foto yang sedang aktif fokus (.active-focus)
+            const filename = photos[state.current_index];
+            if (!state.tags[filename]) state.tags[filename] = { bride: false, groom: false };
+            
+            const prevB = state.tags[filename].bride;
+            const prevG = state.tags[filename].groom;
+            
+            state.tags[filename][reviewer] = !state.tags[filename][reviewer];
+            
+            if (reviewer === 'bride') {
+                if (state.tags[filename].bride) stats.bride++; else stats.bride--;
+            } else {
+                if (state.tags[filename].groom) stats.groom++; else stats.groom--;
+            }
+            
+            const nowTagged = state.tags[filename].bride || state.tags[filename].groom;
+            const wasTagged = prevB || prevG;
+            if (nowTagged && !wasTagged) stats.tagged++;
+            if (!nowTagged && wasTagged) stats.tagged--;
+            
+            stats.none = stats.total - stats.tagged;
+
+            render();
+
+            await fetch('/api/tag', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename, reviewer, current_index: state.current_index })
+            });
+        }
+
+        async function clearTags() {
+            const filename = photos[state.current_index];
+            if (!state.tags[filename]) return;
+            
+            state.tags[filename] = { bride: false, groom: false };
+            const res = await fetch('/api/data');
+            const data = await res.json();
+            stats = data.stats;
+            state = data.state;
+            render();
+
+            await fetch('/api/clear', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.xml ? '' : JSON.stringify({ filename, current_index: state.current_index })
+            });
+        }
+
+        window.addEventListener('keydown', e => {
+            if (e.key === 'ArrowRight') {
+                if (state.current_index < photos.length - 1) { 
+                    state.current_index++; 
+                    render(); 
+                }
+            } else if (e.key === 'ArrowLeft') {
+                if (state.current_index > 0) { 
+                    state.current_index--; 
+                    render(); 
+                }
+            } else if (e.key.toLowerCase() === 's') {
+                toggleTag('bride');
+            } else if (e.key.toLowerCase() === 'd') {
+                toggleTag('groom');
+            } else if (e.key === 'Backspace') {
+                clearTags();
+            }
+        });
+
+        loadData();
+    </script>
+</body>
+</html>
